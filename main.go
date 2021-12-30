@@ -328,7 +328,7 @@ func (jackd *Client) Peek(job uint32) (uint32, []byte, error) {
 		return 0, nil, err
 	}
 
-	return jackd.responseJobChunk("FOUND", NoErrs)
+	return jackd.responseJobChunk("FOUND", []string{NotFound})
 }
 
 func (jackd *Client) PeekReady() (uint32, []byte, error) {
@@ -336,7 +336,7 @@ func (jackd *Client) PeekReady() (uint32, []byte, error) {
 		return 0, nil, err
 	}
 
-	return jackd.responseJobChunk("FOUND", NoErrs)
+	return jackd.responseJobChunk("FOUND", []string{NotFound})
 }
 
 func (jackd *Client) PeekDelayed() (uint32, []byte, error) {
@@ -344,7 +344,7 @@ func (jackd *Client) PeekDelayed() (uint32, []byte, error) {
 		return 0, nil, err
 	}
 
-	return jackd.responseJobChunk("FOUND", NoErrs)
+	return jackd.responseJobChunk("FOUND", []string{NotFound})
 }
 
 func (jackd *Client) PeekBuried() (uint32, []byte, error) {
@@ -352,7 +352,7 @@ func (jackd *Client) PeekBuried() (uint32, []byte, error) {
 		return 0, nil, err
 	}
 
-	return jackd.responseJobChunk("FOUND", NoErrs)
+	return jackd.responseJobChunk("FOUND", []string{NotFound})
 }
 
 func (jackd *Client) responseJobChunk(expected string, errs []string) (uint32, []byte, error) {
