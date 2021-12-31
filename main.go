@@ -54,7 +54,7 @@ func Dial(addr string) (*Client, error) {
 
 func Must(client *Client, err error) *Client {
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("unable to connect to beanstalkd instance %v", err)
 	}
 
 	return client
