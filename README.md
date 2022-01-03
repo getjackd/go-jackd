@@ -242,7 +242,13 @@ func worker(conn *jackd.Client, fn func(id uint32, body []byte) error) error {
 
 ## Concurrency
 
-Please keep in mind that `beanstalkd` processes commands for a given connection serially. This means that you should never access the same `jackd` client from different goroutines. You've been warned!
+`jackd` as of 1.1.0 supports issuing commands from multiple goroutines. In order to avoid concurrency issues, all `jackd` commands are synchronized with a mutex. This is because `beanstalkd` processes commands per connection serially. 
+
+Please keep this in mind as your goroutines may block each other if they're utilizing the same `jackd` instance (especially with long-running commands, like the `reserve` commands). This is normally not a problem in most architectures, but if you do run into issues, you have several options:
+
+* If you need to publish and consume from the same process, use two separate `jackd` instances: one for publishing and one for consuming 
+* Ensure that you create individual `jackd` instances per goroutine. Keep in mind that this opens a new connection to `beanstalkd`.
+* Keep all of your code synchronous when dealing with `jackd` (specifically, use mutexes, wait groups, or simply do not use multiple goroutines with `jackd`)
 
 # License
 

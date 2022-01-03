@@ -2,10 +2,11 @@ package jackd_test
 
 import (
 	"crypto/rand"
-	"github.com/goccy/go-yaml"
-	"github.com/stretchr/testify/assert"
 	"testing"
 	"time"
+
+	"github.com/goccy/go-yaml"
+	"github.com/stretchr/testify/assert"
 
 	"github.com/getjackd/go-jackd"
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,10 @@ type JackdSuite struct {
 	suite.Suite
 	beanstalkd  *jackd.Client
 	beanstalkd2 *jackd.Client
+}
+
+func TestJackdSuite(t *testing.T) {
+	suite.Run(t, new(JackdSuite))
 }
 
 func (suite *JackdSuite) SetupTest() {
@@ -360,8 +365,4 @@ func (suite *JackdSuite) TestPauseTube() {
 
 	assert.Equal(suite.T(), job, reservedJob)
 	assert.Equal(suite.T(), payload, reservedPayload)
-}
-
-func TestJackdSuite(t *testing.T) {
-	suite.Run(t, new(JackdSuite))
 }

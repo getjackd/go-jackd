@@ -6,31 +6,12 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 	"time"
 )
 
 var Delimiter = []byte("\r\n")
 var MaxTubeName = 200
-
-type Client struct {
-	conn    net.Conn
-	buffer  *bufio.ReadWriter
-	scanner *bufio.Scanner
-}
-
-type PutOpts struct {
-	Priority uint32
-	Delay    time.Duration
-	TTR      time.Duration
-}
-
-func DefaultPutOpts() PutOpts {
-	return PutOpts{
-		Priority: 0,
-		Delay:    0,
-		TTR:      60 * time.Second,
-	}
-}
 
 func Dial(addr string) (*Client, error) {
 	conn, err := net.Dial("tcp", addr)
@@ -49,18 +30,14 @@ func Dial(addr string) (*Client, error) {
 			bufio.NewWriter(conn),
 		),
 		scanner: scanner,
+		mutex:   new(sync.Mutex),
 	}, nil
 }
 
-func Must(client *Client, err error) *Client {
-	if err != nil {
-		log.Fatalf("unable to connect to beanstalkd instance %v", err)
-	}
-
-	return client
-}
-
 func (jackd *Client) Put(body []byte, opts PutOpts) (uint32, error) {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
 	command := []byte(fmt.Sprintf(
 		"put %d %d %d %d\r\n",
 		opts.Priority,
@@ -114,6 +91,9 @@ func (jackd *Client) Put(body []byte, opts PutOpts) (uint32, error) {
 }
 
 func (jackd *Client) Use(tube string) (usingTube string, err error) {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
 	if err = validateTubeName(tube); err != nil {
 		return
 	}
@@ -139,6 +119,9 @@ func (jackd *Client) Use(tube string) (usingTube string, err error) {
 }
 
 func (jackd *Client) Kick(numJobs uint32) (kicked uint32, err error) {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
 	if err = jackd.write([]byte(fmt.Sprintf("kick %d\r\n", numJobs))); err != nil {
 		return
 	}
@@ -160,6 +143,9 @@ func (jackd *Client) Kick(numJobs uint32) (kicked uint32, err error) {
 }
 
 func (jackd *Client) KickJob(id uint32) error {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
 	if err := jackd.write([]byte(fmt.Sprintf("kick-job %d\r\n", id))); err != nil {
 		return err
 	}
@@ -167,17 +153,10 @@ func (jackd *Client) KickJob(id uint32) error {
 	return jackd.expectedResponse("KICKED", []string{NotFound})
 }
 
-func (jackd *Client) write(command []byte) error {
-	if _, err := jackd.buffer.Write(command); err != nil {
-		return err
-	}
-	if err := jackd.buffer.Flush(); err != nil {
-		return err
-	}
-	return nil
-}
-
 func (jackd *Client) Delete(job uint32) error {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
 	if err := jackd.write([]byte(fmt.Sprintf("delete %d\r\n", job))); err != nil {
 		return err
 	}
@@ -186,6 +165,9 @@ func (jackd *Client) Delete(job uint32) error {
 }
 
 func (jackd *Client) PauseTube(tube string, delay time.Duration) error {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
 	if err := jackd.write([]byte(fmt.Sprintf(
 		"pause-tube %s %d\r\n",
 		tube,
@@ -197,19 +179,10 @@ func (jackd *Client) PauseTube(tube string, delay time.Duration) error {
 	return jackd.expectedResponse("PAUSED", []string{NotFound})
 }
 
-type ReleaseOpts struct {
-	Priority uint32
-	Delay    time.Duration
-}
-
-func DefaultReleaseOpts() ReleaseOpts {
-	return ReleaseOpts{
-		Priority: 0,
-		Delay:    0,
-	}
-}
-
 func (jackd *Client) Release(job uint32, opts ReleaseOpts) error {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
 	if err := jackd.write([]byte(fmt.Sprintf(
 		"release %d %d %d\r\n",
 		job,
@@ -223,6 +196,9 @@ func (jackd *Client) Release(job uint32, opts ReleaseOpts) error {
 }
 
 func (jackd *Client) Bury(job uint32, priority uint32) error {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
 	if err := jackd.write([]byte(fmt.Sprintf(
 		"bury %d %d\r\n",
 		job,
@@ -235,6 +211,9 @@ func (jackd *Client) Bury(job uint32, priority uint32) error {
 }
 
 func (jackd *Client) Touch(job uint32) error {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
 	if err := jackd.write([]byte(fmt.Sprintf("touch %d\r\n", job))); err != nil {
 		return err
 	}
@@ -243,6 +222,9 @@ func (jackd *Client) Touch(job uint32) error {
 }
 
 func (jackd *Client) Watch(tube string) (watched uint32, err error) {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
 	if err = validateTubeName(tube); err != nil {
 		return
 	}
@@ -268,6 +250,9 @@ func (jackd *Client) Watch(tube string) (watched uint32, err error) {
 }
 
 func (jackd *Client) Ignore(tube string) (watched uint32, err error) {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
 	if err = validateTubeName(tube); err != nil {
 		return
 	}
@@ -292,6 +277,162 @@ func (jackd *Client) Ignore(tube string) (watched uint32, err error) {
 	return
 }
 
+func (jackd *Client) Reserve() (uint32, []byte, error) {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
+	if err := jackd.write([]byte("reserve\r\n")); err != nil {
+		return 0, nil, err
+	}
+
+	return jackd.responseJobChunk("RESERVED", []string{DeadlineSoon, TimedOut})
+}
+
+func (jackd *Client) ReserveJob(job uint32) (uint32, []byte, error) {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
+	if err := jackd.write([]byte(fmt.Sprintf("reserve-job %d\r\n", job))); err != nil {
+		return 0, nil, err
+	}
+
+	return jackd.responseJobChunk("RESERVED", []string{DeadlineSoon, TimedOut})
+}
+
+func (jackd *Client) Peek(job uint32) (uint32, []byte, error) {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
+	if err := jackd.write([]byte(fmt.Sprintf("peek %d\r\n", job))); err != nil {
+		return 0, nil, err
+	}
+
+	return jackd.responseJobChunk("FOUND", []string{NotFound})
+}
+
+func (jackd *Client) PeekReady() (uint32, []byte, error) {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
+	if err := jackd.write([]byte("peek-ready\r\n")); err != nil {
+		return 0, nil, err
+	}
+
+	return jackd.responseJobChunk("FOUND", []string{NotFound})
+}
+
+func (jackd *Client) PeekDelayed() (uint32, []byte, error) {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
+	if err := jackd.write([]byte("peek-delayed\r\n")); err != nil {
+		return 0, nil, err
+	}
+
+	return jackd.responseJobChunk("FOUND", []string{NotFound})
+}
+
+func (jackd *Client) PeekBuried() (uint32, []byte, error) {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
+	if err := jackd.write([]byte("peek-buried\r\n")); err != nil {
+		return 0, nil, err
+	}
+
+	return jackd.responseJobChunk("FOUND", []string{NotFound})
+}
+
+func (jackd *Client) StatsJob(id uint32) ([]byte, error) {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
+	if err := jackd.write([]byte(fmt.Sprintf("stats-job %d\r\n", id))); err != nil {
+		return nil, err
+	}
+
+	return jackd.responseDataChunk([]string{NotFound})
+}
+
+func (jackd *Client) StatsTube(tubeName string) ([]byte, error) {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
+	if err := jackd.write([]byte(fmt.Sprintf("stats-tube %s\r\n", tubeName))); err != nil {
+		return nil, err
+	}
+
+	return jackd.responseDataChunk([]string{NotFound})
+}
+
+func (jackd *Client) Stats() ([]byte, error) {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
+	if err := jackd.write([]byte(fmt.Sprintf("stats\r\n"))); err != nil {
+		return nil, err
+	}
+
+	return jackd.responseDataChunk([]string{NotFound})
+}
+
+func (jackd *Client) ListTubes() ([]byte, error) {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
+	if err := jackd.write([]byte(fmt.Sprintf("list-tubes\r\n"))); err != nil {
+		return nil, err
+	}
+
+	return jackd.responseDataChunk([]string{NotFound})
+}
+
+func (jackd *Client) ListTubeUsed() (tube string, err error) {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
+	if err = jackd.write([]byte(fmt.Sprintf("list-tube-used\r\n"))); err != nil {
+		return
+	}
+
+	if jackd.scanner.Scan() {
+		resp := jackd.scanner.Text()
+		if err = validate(resp, NoErrs); err != nil {
+			return
+		}
+
+		_, err = fmt.Sscanf(resp, "USING %s", &tube)
+		if err != nil {
+			return
+		}
+	}
+
+	err = jackd.scanner.Err()
+	return
+}
+
+func (jackd *Client) ListTubesWatched() ([]byte, error) {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
+	if err := jackd.write([]byte(fmt.Sprintf("list-tubes-watched\r\n"))); err != nil {
+		return nil, err
+	}
+
+	return jackd.responseDataChunk([]string{NotFound})
+}
+
+func (jackd *Client) Quit() error {
+	jackd.mutex.Lock()
+	defer jackd.mutex.Unlock()
+
+	if err := jackd.write([]byte("quit\r\n")); err != nil {
+		return err
+	}
+
+	return jackd.conn.Close()
+}
+
 func (jackd *Client) expectedResponse(expected string, errs []string) error {
 	if jackd.scanner.Scan() {
 		resp := jackd.scanner.Text()
@@ -305,54 +446,6 @@ func (jackd *Client) expectedResponse(expected string, errs []string) error {
 	}
 
 	return nil
-}
-
-func (jackd *Client) Reserve() (uint32, []byte, error) {
-	if err := jackd.write([]byte("reserve\r\n")); err != nil {
-		return 0, nil, err
-	}
-
-	return jackd.responseJobChunk("RESERVED", []string{DeadlineSoon, TimedOut})
-}
-
-func (jackd *Client) ReserveJob(job uint32) (uint32, []byte, error) {
-	if err := jackd.write([]byte(fmt.Sprintf("reserve-job %d\r\n", job))); err != nil {
-		return 0, nil, err
-	}
-
-	return jackd.responseJobChunk("RESERVED", []string{DeadlineSoon, TimedOut})
-}
-
-func (jackd *Client) Peek(job uint32) (uint32, []byte, error) {
-	if err := jackd.write([]byte(fmt.Sprintf("peek %d\r\n", job))); err != nil {
-		return 0, nil, err
-	}
-
-	return jackd.responseJobChunk("FOUND", []string{NotFound})
-}
-
-func (jackd *Client) PeekReady() (uint32, []byte, error) {
-	if err := jackd.write([]byte("peek-ready\r\n")); err != nil {
-		return 0, nil, err
-	}
-
-	return jackd.responseJobChunk("FOUND", []string{NotFound})
-}
-
-func (jackd *Client) PeekDelayed() (uint32, []byte, error) {
-	if err := jackd.write([]byte("peek-delayed\r\n")); err != nil {
-		return 0, nil, err
-	}
-
-	return jackd.responseJobChunk("FOUND", []string{NotFound})
-}
-
-func (jackd *Client) PeekBuried() (uint32, []byte, error) {
-	if err := jackd.write([]byte("peek-buried\r\n")); err != nil {
-		return 0, nil, err
-	}
-
-	return jackd.responseJobChunk("FOUND", []string{NotFound})
 }
 
 func (jackd *Client) responseJobChunk(expected string, errs []string) (uint32, []byte, error) {
@@ -391,65 +484,12 @@ func (jackd *Client) responseJobChunk(expected string, errs []string) (uint32, [
 	return id, body, jackd.scanner.Err()
 }
 
-func (jackd *Client) StatsJob(id uint32) ([]byte, error) {
-	if err := jackd.write([]byte(fmt.Sprintf("stats-job %d\r\n", id))); err != nil {
-		return nil, err
+func Must(client *Client, err error) *Client {
+	if err != nil {
+		log.Fatalf("unable to connect to beanstalkd instance %v", err)
 	}
 
-	return jackd.responseDataChunk([]string{NotFound})
-}
-
-func (jackd *Client) StatsTube(tubeName string) ([]byte, error) {
-	if err := jackd.write([]byte(fmt.Sprintf("stats-tube %s\r\n", tubeName))); err != nil {
-		return nil, err
-	}
-
-	return jackd.responseDataChunk([]string{NotFound})
-}
-
-func (jackd *Client) Stats() ([]byte, error) {
-	if err := jackd.write([]byte(fmt.Sprintf("stats\r\n"))); err != nil {
-		return nil, err
-	}
-
-	return jackd.responseDataChunk([]string{NotFound})
-}
-
-func (jackd *Client) ListTubes() ([]byte, error) {
-	if err := jackd.write([]byte(fmt.Sprintf("list-tubes\r\n"))); err != nil {
-		return nil, err
-	}
-
-	return jackd.responseDataChunk([]string{NotFound})
-}
-
-func (jackd *Client) ListTubeUsed() (tube string, err error) {
-	if err = jackd.write([]byte(fmt.Sprintf("list-tube-used\r\n"))); err != nil {
-		return
-	}
-
-	if jackd.scanner.Scan() {
-		resp := jackd.scanner.Text()
-		if err = validate(resp, NoErrs); err != nil {
-			return
-		}
-
-		_, err = fmt.Sscanf(resp, "USING %s", &tube)
-		if err != nil {
-			return
-		}
-	}
-
-	err = jackd.scanner.Err()
-	return
-}
-
-func (jackd *Client) ListTubesWatched() ([]byte, error) {
-	if err := jackd.write([]byte(fmt.Sprintf("list-tubes-watched\r\n"))); err != nil {
-		return nil, err
-	}
-
-	return jackd.responseDataChunk([]string{NotFound})
+	return client
 }
 
 func (jackd *Client) responseDataChunk(errs []string) ([]byte, error) {
@@ -487,14 +527,6 @@ func (jackd *Client) responseDataChunk(errs []string) ([]byte, error) {
 	return body, jackd.scanner.Err()
 }
 
-func (jackd *Client) Quit() error {
-	if err := jackd.write([]byte("quit\r\n")); err != nil {
-		return err
-	}
-
-	return jackd.conn.Close()
-}
-
 var unexpectedResponseError = func(resp string) error {
 	return fmt.Errorf("unexpected response: %s", resp)
 }
@@ -514,4 +546,14 @@ func splitCRLF(buf []byte, atEOF bool) (advance int, token []byte, err error) {
 	}
 	// Request more data.
 	return 0, nil, nil
+}
+
+func (jackd *Client) write(command []byte) error {
+	if _, err := jackd.buffer.Write(command); err != nil {
+		return err
+	}
+	if err := jackd.buffer.Flush(); err != nil {
+		return err
+	}
+	return nil
 }
